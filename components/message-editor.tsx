@@ -19,6 +19,7 @@ export type MessageEditorProps = {
   setMode: Dispatch<SetStateAction<'view' | 'edit'>>;
   setMessages: UseChatHelpers<ChatMessage>['setMessages'];
   regenerate: UseChatHelpers<ChatMessage>['regenerate'];
+  sendMessage?: UseChatHelpers<ChatMessage>['sendMessage'];
 };
 
 export function MessageEditor({
@@ -26,6 +27,7 @@ export function MessageEditor({
   setMode,
   setMessages,
   regenerate,
+  sendMessage,
 }: MessageEditorProps) {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -100,7 +102,19 @@ export function MessageEditor({
             });
 
             setMode('view');
-            regenerate();
+
+            // If sendMessage is available (intercepted version), use it
+            // Otherwise fall back to regenerate
+            if (sendMessage) {
+              sendMessage({
+                role: 'user',
+                parts: [{ type: 'text', text: draftContent }],
+              });
+            } else {
+              regenerate();
+            }
+
+            setIsSubmitting(false);
           }}
         >
           {isSubmitting ? 'Sending...' : 'Send'}

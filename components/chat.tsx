@@ -2,7 +2,7 @@
 
 import { DefaultChatTransport } from 'ai';
 import { useChat } from '@ai-sdk/react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { ChatHeader } from '@/components/chat-header';
 import type { Vote } from '@/lib/db/schema';
@@ -18,6 +18,7 @@ import { toast } from './toast';
 import type { Session } from 'next-auth';
 import { useSearchParams } from 'next/navigation';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
+import { openaiKeyStorage } from '@/lib/openai-key';
 import { useAutoResume } from '@/hooks/use-auto-resume';
 import { ChatSDKError } from '@/lib/errors';
 import type { Attachment, ChatMessage } from '@/lib/types';
@@ -67,6 +68,7 @@ export function Chat({
       api: '/api/chat',
       fetch: fetchWithErrorHandlers,
       prepareSendMessagesRequest({ messages, id, body }) {
+        const apiKey = openaiKeyStorage.get();
         return {
           body: {
             id,
@@ -74,6 +76,9 @@ export function Chat({
             selectedChatModel: initialChatModel,
             selectedVisibilityType: visibilityType,
             ...body,
+          },
+          headers: {
+            ...(apiKey && { 'x-api-key': apiKey }),
           },
         };
       },
@@ -93,6 +98,75 @@ export function Chat({
       }
     },
   });
+
+  // Intercept messages to handle API key validation when no key exists
+  const interceptedSendMessage = useCallback(
+    (message: any, options?: any) => {
+      // If API key exists, send normally
+      if (openaiKeyStorage.exists()) {
+        return sendMessage(message, options);
+      }
+
+      // Extract text from message
+      const getText = (msg: any): string => {
+        if (typeof msg === 'string') return msg;
+        if (msg.text) return msg.text;
+        if (msg.content) return msg.content;
+        if (msg.parts) {
+          const textPart = msg.parts.find((part: any) => part.type === 'text');
+          return textPart?.text || '';
+        }
+        return '';
+      };
+
+      const textContent = getText(message);
+
+      // Add user message to chat
+      const userMessage = {
+        id: generateUUID(),
+        role: 'user' as const,
+        parts: message.parts || [{ type: 'text' as const, text: textContent }],
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, userMessage]);
+
+      // Check for API key in message
+      const apiKeyMatch = textContent.match(/sk-[a-zA-Z0-9_-]+/);
+
+      setTimeout(() => {
+        let responseText: string;
+
+        if (apiKeyMatch && openaiKeyStorage.isValidFormat(apiKeyMatch[0])) {
+          // Valid API key found - store it
+          openaiKeyStorage.set(apiKeyMatch[0]);
+          responseText =
+            'Great! Your API key has been set successfully. You can now use all chat features. How can I help you today?';
+        } else if (apiKeyMatch) {
+          // Invalid API key format
+          responseText =
+            'I found what looks like an API key, but it appears to be invalid. Please make sure it starts with "sk-" and contains only letters, numbers, hyphens, and underscores.';
+        } else {
+          // No API key found
+          responseText =
+            'I need your OpenAI API key to respond. Please paste your API key (it should start with "sk-") in any message.';
+        }
+
+        // Add assistant response
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: generateUUID(),
+            role: 'assistant' as const,
+            parts: [{ type: 'text' as const, text: responseText }],
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      }, 500);
+
+      return Promise.resolve();
+    },
+    [sendMessage, setMessages],
+  );
 
   const searchParams = useSearchParams();
   const query = searchParams.get('query');
@@ -144,6 +218,7 @@ export function Chat({
           messages={messages}
           setMessages={setMessages}
           regenerate={regenerate}
+          sendMessage={interceptedSendMessage}
           isReadonly={isReadonly}
           isArtifactVisible={isArtifactVisible}
         />
@@ -160,7 +235,7 @@ export function Chat({
               setAttachments={setAttachments}
               messages={messages}
               setMessages={setMessages}
-              sendMessage={sendMessage}
+              sendMessage={interceptedSendMessage}
               selectedVisibilityType={visibilityType}
             />
           )}

@@ -2,44 +2,61 @@
 
 import { motion } from 'framer-motion';
 import { Button } from './ui/button';
-import { memo } from 'react';
+import { memo, useState, useEffect } from 'react';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { VisibilityType } from './visibility-selector';
 import type { ChatMessage } from '@/lib/types';
+import { openaiKeyStorage } from '@/lib/openai-key';
 
 interface SuggestedActionsProps {
   chatId: string;
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
   selectedVisibilityType: VisibilityType;
+  setInput?: (input: string) => void;
 }
 
 function PureSuggestedActions({
   chatId,
   sendMessage,
   selectedVisibilityType,
+  setInput,
 }: SuggestedActionsProps) {
-  const suggestedActions = [
-    {
-      title: 'What are the advantages',
-      label: 'of using Next.js?',
-      action: 'What are the advantages of using Next.js?',
-    },
-    {
-      title: 'Write code to',
-      label: `demonstrate djikstra's algorithm`,
-      action: `Write code to demonstrate djikstra's algorithm`,
-    },
-    {
-      title: 'Help me write an essay',
-      label: `about silicon valley`,
-      action: `Help me write an essay about silicon valley`,
-    },
-    {
-      title: 'What is the weather',
-      label: 'in San Francisco?',
-      action: 'What is the weather in San Francisco?',
-    },
-  ];
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+
+  useEffect(() => {
+    setHasApiKey(openaiKeyStorage.exists());
+  }, []);
+
+  const suggestedActions = hasApiKey
+    ? [
+        {
+          title: 'What are the advantages',
+          label: 'of using Next.js?',
+          action: 'What are the advantages of using Next.js?',
+        },
+        {
+          title: 'Write code to',
+          label: `demonstrate djikstra's algorithm`,
+          action: `Write code to demonstrate djikstra's algorithm`,
+        },
+        {
+          title: 'Help me write an essay',
+          label: `about silicon valley`,
+          action: `Help me write an essay about silicon valley`,
+        },
+        {
+          title: 'What is the weather',
+          label: 'in San Francisco?',
+          action: 'What is the weather in San Francisco?',
+        },
+      ]
+    : [
+        {
+          title: 'Paste your OpenAI API key',
+          label: 'in any message format',
+          action: 'my openai api key is ',
+        },
+      ];
 
   return (
     <div
@@ -57,13 +74,15 @@ function PureSuggestedActions({
         >
           <Button
             variant="ghost"
-            onClick={async () => {
-              window.history.replaceState({}, '', `/chat/${chatId}`);
+            type="button"
+            onClick={async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
 
-              sendMessage({
-                role: 'user',
-                parts: [{ type: 'text', text: suggestedAction.action }],
-              });
+              if (setInput) {
+                // Set the text in the input field instead of sending
+                setInput(suggestedAction.action);
+              }
             }}
             className="text-left border rounded-xl px-4 py-3.5 text-sm flex-1 gap-1 sm:flex-col w-full h-auto justify-start items-start"
           >

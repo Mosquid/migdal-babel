@@ -68,6 +68,55 @@ export class ChatPage {
       .click();
   }
 
+  async clickApiKeyInputSuggestion() {
+    await this.page
+      .getByRole('button', { name: 'Paste your OpenAI API key' })
+      .click();
+  }
+
+  async submitApiKeyThroughPrompt(apiKey: string) {
+    // Set up a dialog handler to intercept the prompt
+    this.page.once('dialog', async (dialog) => {
+      expect(dialog.type()).toBe('prompt');
+      expect(dialog.message()).toContain('OpenAI API key');
+      await dialog.accept(apiKey);
+    });
+
+    await this.clickApiKeyInputSuggestion();
+  }
+
+  async expectApiKeyValidationError() {
+    // Set up an alert handler to catch validation errors
+    this.page.once('dialog', async (dialog) => {
+      expect(dialog.type()).toBe('alert');
+      expect(dialog.message()).toContain('Invalid API key format');
+      await dialog.accept();
+    });
+  }
+
+  async clearLocalStorage() {
+    await this.page.evaluate(() => {
+      localStorage.clear();
+    });
+  }
+
+  async setLocalStorageApiKey(apiKey: string) {
+    await this.page.evaluate((key) => {
+      localStorage.setItem('openai_api_key', key);
+    }, apiKey);
+  }
+
+  async getLocalStorageApiKey(): Promise<string | null> {
+    return await this.page.evaluate(() => {
+      return localStorage.getItem('openai_api_key');
+    });
+  }
+
+  async hasValidApiKeyInStorage(): Promise<boolean> {
+    const key = await this.getLocalStorageApiKey();
+    return key !== null && key.length > 0 && key.startsWith('sk-');
+  }
+
   async isElementVisible(elementId: string) {
     await expect(this.page.getByTestId(elementId)).toBeVisible();
   }
@@ -252,5 +301,28 @@ export class ChatPage {
     await this.scrollContainer.evaluate((element) => {
       element.scrollTop = 0;
     });
+  }
+
+  async expectSuggestedActionsToShow(type: 'api-key' | 'regular') {
+    if (type === 'api-key') {
+      await expect(
+        this.page.getByRole('button', { name: 'Paste your OpenAI API key' }),
+      ).toBeVisible();
+      await expect(
+        this.page.getByRole('button', { name: 'What are the advantages of' }),
+      ).not.toBeVisible();
+    } else {
+      await expect(
+        this.page.getByRole('button', { name: 'What are the advantages of' }),
+      ).toBeVisible();
+      await expect(
+        this.page.getByRole('button', { name: 'Paste your OpenAI API key' }),
+      ).not.toBeVisible();
+    }
+  }
+
+  async reloadPageAndWait() {
+    await this.page.reload();
+    await this.page.waitForLoadState('networkidle');
   }
 }

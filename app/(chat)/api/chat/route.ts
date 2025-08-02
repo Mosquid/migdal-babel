@@ -24,7 +24,6 @@ import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { isProductionEnvironment } from '@/lib/constants';
-import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
@@ -37,6 +36,12 @@ import { ChatSDKError } from '@/lib/errors';
 import type { ChatMessage } from '@/lib/types';
 import type { ChatModel } from '@/lib/ai/models';
 import type { VisibilityType } from '@/components/visibility-selector';
+import { createOpenAI } from '@ai-sdk/openai';
+import {
+  customProvider,
+  extractReasoningMiddleware,
+  wrapLanguageModel,
+} from 'ai';
 
 export const maxDuration = 60;
 
@@ -73,6 +78,12 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Extract API key from headers
+    const apiKey = request.headers.get('x-api-key');
+
+    if (!apiKey) {
+      return new ChatSDKError('unauthorized:chat').toResponse();
+    }
     const {
       id,
       message,
@@ -107,6 +118,7 @@ export async function POST(request: Request) {
     if (!chat) {
       const title = await generateTitleFromUserMessage({
         message,
+        apiKey,
       });
 
       await saveChat({
@@ -149,10 +161,27 @@ export async function POST(request: Request) {
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
+    // Create custom provider with user's API key
+    const openaiProvider = createOpenAI({ apiKey });
+    const userProvider = customProvider({
+      languageModels: {
+        'chat-model': openaiProvider('gpt-4o'),
+        'chat-model-reasoning': wrapLanguageModel({
+          model: openaiProvider('o3-mini'),
+          middleware: extractReasoningMiddleware({ tagName: 'think' }),
+        }),
+        'title-model': openaiProvider('gpt-4o-mini'),
+        'artifact-model': openaiProvider('gpt-4o-mini'),
+      },
+      imageModels: {
+        'small-model': openaiProvider.imageModel('gpt-4o'),
+      },
+    });
+
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
         const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
+          model: userProvider.languageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),
           messages: convertToModelMessages(uiMessages),
           stopWhen: stepCountIs(5),
@@ -222,6 +251,10 @@ export async function POST(request: Request) {
     if (error instanceof ChatSDKError) {
       return error.toResponse();
     }
+
+    // Handle any other unexpected errors
+    console.error('Unexpected error in chat API:', error);
+    return new ChatSDKError('bad_request:api').toResponse();
   }
 }
 
