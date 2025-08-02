@@ -1,30 +1,23 @@
 import {
   convertToModelMessages,
-  createUIMessageStream,
-  JsonToSseTransformStream,
-  smoothStream,
-  stepCountIs,
-  streamText,
+  generateText,
+  customProvider,
+  extractReasoningMiddleware,
+  wrapLanguageModel,
 } from 'ai';
-import { auth, type UserType } from '@/app/(auth)/auth';
+import { auth } from '@/app/(auth)/auth';
 import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
 import {
   createStreamId,
   deleteChatById,
   getChatById,
-  getMessageCountByUserId,
   getMessagesByChatId,
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
 import { convertToUIMessages, generateUUID } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
-import { createDocument } from '@/lib/ai/tools/create-document';
-import { updateDocument } from '@/lib/ai/tools/update-document';
-import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
-import { isProductionEnvironment } from '@/lib/constants';
-import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { geolocation } from '@vercel/functions';
 import {
@@ -37,11 +30,8 @@ import type { ChatMessage } from '@/lib/types';
 import type { ChatModel } from '@/lib/ai/models';
 import type { VisibilityType } from '@/components/visibility-selector';
 import { createOpenAI } from '@ai-sdk/openai';
-import {
-  customProvider,
-  extractReasoningMiddleware,
-  wrapLanguageModel,
-} from 'ai';
+
+import { streamTranslateText, translateMessage } from '@/lib/ai/translation';
 
 export const maxDuration = 60;
 
@@ -89,28 +79,21 @@ export async function POST(request: Request) {
       message,
       selectedChatModel,
       selectedVisibilityType,
+      inputLanguage = 'en',
+      searchLanguage = 'en',
     }: {
       id: string;
       message: ChatMessage;
       selectedChatModel: ChatModel['id'];
       selectedVisibilityType: VisibilityType;
+      inputLanguage?: string;
+      searchLanguage?: string;
     } = requestBody;
 
     const session = await auth();
 
     if (!session?.user) {
       return new ChatSDKError('unauthorized:chat').toResponse();
-    }
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new ChatSDKError('rate_limit:chat').toResponse();
     }
 
     const chat = await getChatById({ id });
@@ -136,6 +119,52 @@ export async function POST(request: Request) {
     const messagesFromDb = await getMessagesByChatId({ id });
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
 
+    console.log('🌍 [De-Babel] Language Configuration:', {
+      inputLanguage,
+      searchLanguage,
+      translationRequired: inputLanguage !== searchLanguage,
+    });
+
+    console.log('📝 [De-Babel] Original User Message:', {
+      role: message.role,
+      parts: message.parts,
+      language: inputLanguage,
+    });
+
+    // Translate messages for processing if languages differ
+    let processedMessages = uiMessages;
+    if (inputLanguage !== searchLanguage) {
+      console.log('🔄 [De-Babel] Translating messages to search language...');
+
+      // Translate all messages to search language for AI processing
+      processedMessages = await Promise.all(
+        uiMessages.map(async (msg) => {
+          if (msg.role === 'user') {
+            const translatedMessage = await translateMessage(
+              msg,
+              inputLanguage,
+              searchLanguage,
+              apiKey,
+            );
+
+            console.log('🔄 [De-Babel] Message Translation:', {
+              original: msg.parts,
+              translated: translatedMessage.parts,
+              from: inputLanguage,
+              to: searchLanguage,
+            });
+
+            return translatedMessage;
+          }
+          return msg; // Keep assistant messages as-is
+        }),
+      );
+
+      console.log('✅ [De-Babel] Translation to search language complete');
+    } else {
+      console.log('ℹ️ [De-Babel] No translation needed - same language');
+    }
+
     const { longitude, latitude, city, country } = geolocation(request);
 
     const requestHints: RequestHints = {
@@ -144,19 +173,6 @@ export async function POST(request: Request) {
       city,
       country,
     };
-
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: 'user',
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-        },
-      ],
-    });
 
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
@@ -178,74 +194,80 @@ export async function POST(request: Request) {
       },
     });
 
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        const result = streamText({
-          model: userProvider.languageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: convertToModelMessages(uiMessages),
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            selectedChatModel === 'chat-model-reasoning'
-              ? []
-              : [
-                  'getWeather',
-                  'createDocument',
-                  'updateDocument',
-                  'requestSuggestions',
-                ],
-          experimental_transform: smoothStream({ chunking: 'word' }),
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: 'stream-text',
-          },
-        });
+    // Use completion API for all inference, then stream the (translated) response
+    console.log('🔄 [De-Babel] Using completion API for inference...');
 
-        result.consumeStream();
-
-        dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-          }),
-        );
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((message) => ({
-            id: message.id,
-            role: message.role,
-            parts: message.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
-        });
-      },
-      onError: () => {
-        return 'Oops, an error occurred!';
+    // Get complete response using generateText
+    const { text } = await generateText({
+      model: userProvider.languageModel(selectedChatModel),
+      system: systemPrompt({
+        selectedChatModel,
+        requestHints,
+        inputLanguage,
+        searchLanguage,
+      }),
+      messages: convertToModelMessages(processedMessages),
+      tools: {
+        getWeather,
+        // Note: Document tools are not supported in completion API
       },
     });
 
-    const streamContext = getStreamContext();
+    console.log('🤖 [De-Babel] AI Response Generated:', {
+      text: text.substring(0, 200) + (text.length > 200 ? '...' : ''),
+      language: searchLanguage,
+    });
 
-    if (streamContext) {
-      return new Response(
-        await streamContext.resumableStream(streamId, () =>
-          stream.pipeThrough(new JsonToSseTransformStream()),
-        ),
+    // Save the AI response
+    const assistantMessage = {
+      id: generateUUID(),
+      role: 'assistant' as const,
+      parts: [{ type: 'text' as const, text }],
+      createdAt: new Date(),
+      chatId: id,
+      attachments: [],
+    };
+
+    await saveMessages({
+      messages: [
+        {
+          chatId: id,
+          id: message.id,
+          role: 'user' as const,
+          parts: message.parts,
+          attachments: [],
+          createdAt: new Date(),
+        },
+        assistantMessage,
+      ],
+    });
+
+    // Stream the translated response if needed
+    if (inputLanguage !== searchLanguage) {
+      console.log(
+        '🔄 [De-Babel] Translating and streaming AI response back to user language...',
       );
+
+      const translationStream = await streamTranslateText({
+        text,
+        fromLanguage: searchLanguage,
+        toLanguage: inputLanguage,
+        apiKey,
+      });
+
+      return new Response(translationStream);
     } else {
-      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+      console.log(
+        '✅ [De-Babel] No response translation needed - streaming original text',
+      );
+      // If no translation is needed, stream the original text directly
+      const readableStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(text);
+          controller.close();
+        },
+      });
+      return new Response(readableStream);
     }
   } catch (error) {
     if (error instanceof ChatSDKError) {

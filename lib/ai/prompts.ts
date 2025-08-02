@@ -53,16 +53,30 @@ About the origin of user's request:
 export const systemPrompt = ({
   selectedChatModel,
   requestHints,
+  inputLanguage,
+  searchLanguage,
 }: {
   selectedChatModel: string;
   requestHints: RequestHints;
+  inputLanguage?: string;
+  searchLanguage?: string;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
 
+  // Add language translation context if languages differ
+  let languagePrompt = '';
+  if (inputLanguage && searchLanguage && inputLanguage !== searchLanguage) {
+    languagePrompt = `\n\nLanguage Context:
+- User's input language: ${inputLanguage}
+- Search/processing language: ${searchLanguage}
+- When responding, your response will be automatically translated back to the user's input language (${inputLanguage})
+- Focus on providing accurate and helpful information in ${searchLanguage} for the best search results`;
+  }
+
   if (selectedChatModel === 'chat-model-reasoning') {
-    return `${regularPrompt}\n\n${requestPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${languagePrompt}`;
   } else {
-    return `${regularPrompt}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${languagePrompt}\n\n${artifactsPrompt}`;
   }
 };
 

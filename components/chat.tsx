@@ -1,12 +1,10 @@
 'use client';
 
-import { DefaultChatTransport } from 'ai';
-import { useChat } from '@ai-sdk/react';
 import { useCallback, useEffect, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { ChatHeader } from '@/components/chat-header';
 import type { Vote } from '@/lib/db/schema';
-import { fetcher, fetchWithErrorHandlers, generateUUID } from '@/lib/utils';
+import { fetcher, generateUUID } from '@/lib/utils';
 import { Artifact } from './artifact';
 import { MultimodalInput } from './multimodal-input';
 import { Messages } from './messages';
@@ -14,15 +12,14 @@ import type { VisibilityType } from './visibility-selector';
 import { useArtifactSelector } from '@/hooks/use-artifact';
 import { unstable_serialize } from 'swr/infinite';
 import { getChatHistoryPaginationKey } from './sidebar-history';
-import { toast } from './toast';
 import type { Session } from 'next-auth';
 import { useSearchParams } from 'next/navigation';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
 import { openaiKeyStorage } from '@/lib/openai-key';
-import { useAutoResume } from '@/hooks/use-auto-resume';
-import { ChatSDKError } from '@/lib/errors';
 import type { Attachment, ChatMessage } from '@/lib/types';
-import { useDataStream } from './data-stream-provider';
+import { useLanguagePreferences } from '@/hooks/use-language-preferences';
+
+type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error';
 
 export function Chat({
   id,
@@ -31,7 +28,6 @@ export function Chat({
   initialVisibilityType,
   isReadonly,
   session,
-  autoResume,
 }: {
   id: string;
   initialMessages: ChatMessage[];
@@ -47,64 +43,103 @@ export function Chat({
   });
 
   const { mutate } = useSWRConfig();
-  const { setDataStream } = useDataStream();
+  const { inputLanguage, searchLanguage, isLoaded } = useLanguagePreferences();
 
   const [input, setInput] = useState<string>('');
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [status, setStatus] = useState<ChatStatus>('ready');
 
-  const {
-    messages,
-    setMessages,
-    sendMessage,
-    status,
-    stop,
-    regenerate,
-    resumeStream,
-  } = useChat<ChatMessage>({
-    id,
-    messages: initialMessages,
-    experimental_throttle: 100,
-    generateId: generateUUID,
-    transport: new DefaultChatTransport({
-      api: '/api/chat',
-      fetch: fetchWithErrorHandlers,
-      prepareSendMessagesRequest({ messages, id, body }) {
-        const apiKey = openaiKeyStorage.get();
-        return {
-          body: {
+  const sendMessage = useCallback(
+    async (message: ChatMessage) => {
+      setStatus('submitted');
+      const newMessages = [...messages, message];
+      setMessages(newMessages);
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': openaiKeyStorage.get() || '',
+          },
+          body: JSON.stringify({
             id,
-            message: messages.at(-1),
+            message,
             selectedChatModel: initialChatModel,
             selectedVisibilityType: visibilityType,
-            ...body,
-          },
-          headers: {
-            ...(apiKey && { 'x-api-key': apiKey }),
-          },
-        };
-      },
-    }),
-    onData: (dataPart) => {
-      setDataStream((ds) => (ds ? [...ds, dataPart] : []));
-    },
-    onFinish: () => {
-      mutate(unstable_serialize(getChatHistoryPaginationKey));
-    },
-    onError: (error) => {
-      if (error instanceof ChatSDKError) {
-        toast({
-          type: 'error',
-          description: error.message,
+            inputLanguage,
+            searchLanguage,
+          }),
         });
+
+        if (!response.body) {
+          setStatus('error');
+          return;
+        }
+
+        setStatus('streaming');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let done = false;
+        let fullResponse = '';
+
+        const assistantMessage: ChatMessage = {
+          id: generateUUID(),
+          role: 'assistant',
+          parts: [{ type: 'text', text: '' }],
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+
+        while (!done) {
+          const { value, done: readerDone } = await reader.read();
+          done = readerDone;
+          const chunk = decoder.decode(value, { stream: true });
+          fullResponse += chunk;
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessage.id
+                ? { ...m, parts: [{ type: 'text', text: fullResponse }] }
+                : m,
+            ),
+          );
+        }
+
+        mutate(unstable_serialize(getChatHistoryPaginationKey));
+        setStatus('ready');
+      } catch (error) {
+        setStatus('error');
       }
     },
-  });
+    [
+      id,
+      initialChatModel,
+      visibilityType,
+      inputLanguage,
+      searchLanguage,
+      messages,
+      mutate,
+    ],
+  );
 
   // Intercept messages to handle API key validation when no key exists
   const interceptedSendMessage = useCallback(
     (message: any, options?: any) => {
+      // Ensure the message has an ID before sending
+      const messageWithId: ChatMessage = {
+        id: message.id || generateUUID(), // Generate ID if missing
+        role: message.role || 'user', // Default role to 'user' if missing
+        parts: message.parts || [{ type: 'text', text: message.text || '' }], // Ensure parts exist
+        // Copy other properties if they exist
+        ...(message.data && { data: message.data }),
+        ...(message.ui && { ui: message.ui }),
+        ...(message.display && { display: message.display }),
+      };
+
       // If API key exists, send normally
       if (openaiKeyStorage.exists()) {
-        return sendMessage(message, options);
+        return sendMessage(messageWithId);
       }
 
       // Extract text from message
@@ -126,7 +161,6 @@ export function Chat({
         id: generateUUID(),
         role: 'user' as const,
         parts: message.parts || [{ type: 'text' as const, text: textContent }],
-        createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, userMessage]);
 
@@ -158,7 +192,6 @@ export function Chat({
             id: generateUUID(),
             role: 'assistant' as const,
             parts: [{ type: 'text' as const, text: responseText }],
-            createdAt: new Date().toISOString(),
           },
         ]);
       }, 500);
@@ -176,6 +209,7 @@ export function Chat({
   useEffect(() => {
     if (query && !hasAppendedQuery) {
       sendMessage({
+        id: generateUUID(),
         role: 'user' as const,
         parts: [{ type: 'text', text: query }],
       });
@@ -193,12 +227,14 @@ export function Chat({
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
-  useAutoResume({
-    autoResume,
-    initialMessages,
-    resumeStream,
-    setMessages,
-  });
+  const handleArtifactSendMessage = async (message: any) => {
+    const newMessage: ChatMessage = {
+      id: message.id || generateUUID(),
+      role: message.role || 'user',
+      parts: message.parts,
+    };
+    await sendMessage(newMessage);
+  };
 
   return (
     <>
@@ -209,6 +245,7 @@ export function Chat({
           selectedVisibilityType={initialVisibilityType}
           isReadonly={isReadonly}
           session={session}
+          hasMessages={messages.length > 0}
         />
 
         <Messages
@@ -217,7 +254,7 @@ export function Chat({
           votes={votes}
           messages={messages}
           setMessages={setMessages}
-          regenerate={regenerate}
+          regenerate={async () => {}}
           sendMessage={interceptedSendMessage}
           isReadonly={isReadonly}
           isArtifactVisible={isArtifactVisible}
@@ -230,7 +267,7 @@ export function Chat({
               input={input}
               setInput={setInput}
               status={status}
-              stop={stop}
+              stop={async () => {}}
               attachments={attachments}
               setAttachments={setAttachments}
               messages={messages}
@@ -247,13 +284,13 @@ export function Chat({
         input={input}
         setInput={setInput}
         status={status}
-        stop={stop}
+        stop={async () => {}}
         attachments={attachments}
         setAttachments={setAttachments}
-        sendMessage={sendMessage}
+        sendMessage={handleArtifactSendMessage}
         messages={messages}
         setMessages={setMessages}
-        regenerate={regenerate}
+        regenerate={async () => {}}
         votes={votes}
         isReadonly={isReadonly}
         selectedVisibilityType={visibilityType}

@@ -104,6 +104,9 @@ importers:
       codemirror:
         specifier: ^6.0.1
         version: 6.0.1
+      country-flag-icons:
+        specifier: ^1.5.19
+        version: 1.5.19
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
@@ -2000,6 +2003,9 @@ packages:
   cookie@0.7.1:
     resolution: {integrity: sha512-6DnInpx7SJ2AK3+CTUE/ZM0vWTUboZCegxhC2xiIydHR9jNuTAASBrfEpHhiGOZw/nX51bHt6YQl8jsGo4y/0w==}
     engines: {node: '>= 0.6'}
+
+  country-flag-icons@1.5.19:
+    resolution: {integrity: sha512-D/ZkRyj+ywJC6b2IrAN3/tpbReMUqmuRLlcKFoY/o0+EPQN9Ev/e8tV+D3+9scvu/tarxwLErNwS73C3yzxs/g==}
 
   crelt@1.0.6:
     resolution: {integrity: sha512-VQ2MBenTq1fWZUH9DJNGti7kKv6EeAuYr3cLwxUWhIu1baTaXh4Ib5W2CqHVqib4/MqbYGJqiL3Zb8GJZr3l4g==}
@@ -5443,6 +5449,8 @@ snapshots:
   concat-map@0.0.1: {}
 
   cookie@0.7.1: {}
+
+  country-flag-icons@1.5.19: {}
 
   crelt@1.0.6: {}
 
