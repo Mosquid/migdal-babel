@@ -1,5 +1,4 @@
 import type { ArtifactKind } from '@/components/artifact';
-import type { Geo } from '@vercel/functions';
 
 export const artifactsPrompt = `
 Artifacts is a special user interface mode that helps users with writing, editing, and other content creation tasks. When artifact is open, it is on the right side of the screen, while the conversation is on the left side. When creating or updating documents, changes are reflected in real-time on the artifacts and visible to the user.
@@ -34,51 +33,6 @@ Do not update document right after creating it. Wait for user feedback or reques
 
 export const regularPrompt =
   'You are a friendly assistant! Keep your responses concise and helpful.';
-
-export interface RequestHints {
-  latitude: Geo['latitude'];
-  longitude: Geo['longitude'];
-  city: Geo['city'];
-  country: Geo['country'];
-}
-
-export const getRequestPromptFromHints = (requestHints: RequestHints) => `\
-About the origin of user's request:
-- lat: ${requestHints.latitude}
-- lon: ${requestHints.longitude}
-- city: ${requestHints.city}
-- country: ${requestHints.country}
-`;
-
-export const systemPrompt = ({
-  selectedChatModel,
-  requestHints,
-  inputLanguage,
-  searchLanguage,
-}: {
-  selectedChatModel: string;
-  requestHints: RequestHints;
-  inputLanguage?: string;
-  searchLanguage?: string;
-}) => {
-  const requestPrompt = getRequestPromptFromHints(requestHints);
-
-  // Add language translation context if languages differ
-  let languagePrompt = '';
-  if (inputLanguage && searchLanguage && inputLanguage !== searchLanguage) {
-    languagePrompt = `\n\nLanguage Context:
-- User's input language: ${inputLanguage}
-- Search/processing language: ${searchLanguage}
-- When responding, your response will be automatically translated back to the user's input language (${inputLanguage})
-- Focus on providing accurate and helpful information in ${searchLanguage} for the best search results`;
-  }
-
-  if (selectedChatModel === 'chat-model-reasoning') {
-    return `${regularPrompt}\n\n${requestPrompt}${languagePrompt}`;
-  } else {
-    return `${regularPrompt}\n\n${requestPrompt}${languagePrompt}\n\n${artifactsPrompt}`;
-  }
-};
 
 export const codePrompt = `
 You are a Python code generator that creates self-contained, executable code snippets. When writing code:

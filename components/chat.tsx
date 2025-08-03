@@ -51,6 +51,12 @@ export function Chat({
 
   const sendMessage = useCallback(
     async (message: ChatMessage) => {
+      // Read language preferences fresh from localStorage to avoid stale state
+      const currentInputLanguage =
+        localStorage.getItem('de-babel-input-language') || 'en';
+      const currentSearchLanguage =
+        localStorage.getItem('de-babel-search-language') || 'en';
+
       setStatus('submitted');
       const newMessages = [...messages, message];
       setMessages(newMessages);
@@ -67,11 +73,10 @@ export function Chat({
             message,
             selectedChatModel: initialChatModel,
             selectedVisibilityType: visibilityType,
-            inputLanguage,
-            searchLanguage,
+            inputLanguage: currentInputLanguage,
+            searchLanguage: currentSearchLanguage,
           }),
         });
-
         if (!response.body) {
           setStatus('error');
           return;
@@ -112,15 +117,7 @@ export function Chat({
         setStatus('error');
       }
     },
-    [
-      id,
-      initialChatModel,
-      visibilityType,
-      inputLanguage,
-      searchLanguage,
-      messages,
-      mutate,
-    ],
+    [id, initialChatModel, visibilityType, messages, mutate],
   );
 
   // Intercept messages to handle API key validation when no key exists

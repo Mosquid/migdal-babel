@@ -6,7 +6,7 @@ import {
   wrapLanguageModel,
 } from 'ai';
 import { auth } from '@/app/(auth)/auth';
-import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
+import { regularPrompt as systemPrompt } from '@/lib/ai/prompts';
 import {
   createStreamId,
   deleteChatById,
@@ -19,7 +19,6 @@ import { convertToUIMessages, generateUUID } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
-import { geolocation } from '@vercel/functions';
 import {
   createResumableStreamContext,
   type ResumableStreamContext,
@@ -165,15 +164,6 @@ export async function POST(request: Request) {
       console.log('ℹ️ [De-Babel] No translation needed - same language');
     }
 
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
-
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
@@ -200,12 +190,7 @@ export async function POST(request: Request) {
     // Get complete response using generateText
     const { text } = await generateText({
       model: userProvider.languageModel(selectedChatModel),
-      system: systemPrompt({
-        selectedChatModel,
-        requestHints,
-        inputLanguage,
-        searchLanguage,
-      }),
+      system: systemPrompt,
       messages: convertToModelMessages(processedMessages),
       tools: {
         getWeather,

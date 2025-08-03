@@ -116,7 +116,14 @@ export function LanguageSelector({
         {SUPPORTED_LANGUAGES.map((language) => (
           <DropdownMenuItem
             key={language.code}
-            onClick={() => updateLanguage(language.code)}
+            onClick={() => {
+              console.log('🔧 [Language Selector] Language selected:', {
+                type,
+                oldLanguage: currentLanguage,
+                newLanguage: language.code,
+              });
+              updateLanguage(language.code);
+            }}
             className="flex items-center justify-between cursor-pointer"
           >
             <div className="flex items-center">

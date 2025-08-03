@@ -1,12 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useWindowSize } from 'usehooks-ts';
 
 import { SidebarToggle } from '@/components/sidebar-toggle';
 import { Button } from '@/components/ui/button';
-import { PlusIcon, VercelIcon } from './icons';
+import { PlusIcon } from './icons';
 import { useSidebar } from './ui/sidebar';
 import { memo } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -16,10 +15,6 @@ import { LanguagePreferencesPanel } from './language-preferences-panel';
 
 function PureChatHeader({
   chatId,
-  selectedModelId,
-  selectedVisibilityType,
-  isReadonly,
-  session,
   hasMessages = false,
 }: {
   chatId: string;
@@ -43,6 +38,7 @@ function PureChatHeader({
         <LanguagePreferencesPanel
           variant="compact"
           className="order-1 md:order-2 shrink-0"
+          chatId={chatId}
         />
       )}
 
@@ -71,6 +67,7 @@ function PureChatHeader({
 export const ChatHeader = memo(PureChatHeader, (prevProps, nextProps) => {
   return (
     prevProps.selectedModelId === nextProps.selectedModelId &&
-    prevProps.hasMessages === nextProps.hasMessages
+    prevProps.hasMessages === nextProps.hasMessages &&
+    prevProps.chatId === nextProps.chatId
   );
 });

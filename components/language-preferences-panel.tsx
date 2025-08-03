@@ -14,11 +14,13 @@ import { getLanguageByCode } from '@/lib/languages';
 interface LanguagePreferencesPanelProps {
   variant?: 'default' | 'compact';
   className?: string;
+  chatId?: string;
 }
 
 export function LanguagePreferencesPanel({
   variant = 'default',
   className,
+  chatId,
 }: LanguagePreferencesPanelProps) {
   const { inputLanguage, searchLanguage } = useLanguagePreferences();
 
