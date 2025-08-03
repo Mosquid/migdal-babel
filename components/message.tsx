@@ -145,10 +145,9 @@ const PurePreviewMessage = ({
                         })}
                       >
                         <Markdown>
-                          {message.role === 'user' 
+                          {message.role === 'user'
                             ? maskApiKeys(sanitizeText(part.text))
-                            : sanitizeText(part.text)
-                          }
+                            : sanitizeText(part.text)}
                         </Markdown>
                       </div>
                     </div>

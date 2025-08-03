@@ -105,7 +105,7 @@ export function sanitizeText(text: string) {
 export function maskApiKeys(text: string): string {
   // Pattern to match OpenAI API keys (sk-[alphanumeric characters, hyphens, underscores])
   const apiKeyPattern = /sk-[a-zA-Z0-9_-]+/g;
-  
+
   return text.replace(apiKeyPattern, (match) => {
     if (match.length <= 8) {
       // For very short keys, just show first 3 chars
