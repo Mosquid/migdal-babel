@@ -97,6 +97,25 @@ export function sanitizeText(text: string) {
   return text.replace('<has_function_call>', '');
 }
 
+/**
+ * Masks OpenAI API keys in text to protect sensitive information
+ * @param text The text that may contain API keys
+ * @returns Text with API keys partially masked
+ */
+export function maskApiKeys(text: string): string {
+  // Pattern to match OpenAI API keys (sk-[alphanumeric characters, hyphens, underscores])
+  const apiKeyPattern = /sk-[a-zA-Z0-9_-]+/g;
+  
+  return text.replace(apiKeyPattern, (match) => {
+    if (match.length <= 8) {
+      // For very short keys, just show first 3 chars
+      return `${match.substring(0, 3)}***`;
+    }
+    // Show first 3 chars, then dots, then last 4 chars
+    return `${match.substring(0, 3)}•••••••••••••••••••••••${match.substring(match.length - 4)}`;
+  });
+}
+
 export function convertToUIMessages(messages: DBMessage[]): ChatMessage[] {
   return messages.map((message) => ({
     id: message.id,
